@@ -55,12 +55,6 @@ def request_to_flow(request_json: dict) -> http.HTTPFlow:
     http_version_resp = request_json["response"]["httpVersion"]
 
     request_content = ""
-    # List contains all the representations of an http request across different HAR files
-    if request_url.startswith("http://"):
-        port = 80
-    else:
-        port = 443
-
     client_conn = connection.Client(
         peername=("127.0.0.1", 0),
         sockname=("127.0.0.1", 0),
@@ -68,19 +62,20 @@ def request_to_flow(request_json: dict) -> http.HTTPFlow:
         timestamp_start=time.time(),
     )
 
-    if server_address:
-        server_conn = connection.Server(address=(server_address, port))
-    else:
-        server_conn = connection.Server(address=None)
-
-    new_flow = http.HTTPFlow(client_conn, server_conn)
-
     if "postData" in request_json["request"]:
         request_content = request_json["request"]["postData"]["text"]
 
-    new_flow.request = http.Request.make(
+    request = http.Request.make(
         request_method, request_url, request_content, request_headers
     )
+
+    new_flow = http.HTTPFlow(
+        client_conn,
+        connection.Server(
+            address=(server_address, request.port) if server_address else None
+        ),
+    )
+    new_flow.request = request
 
     response_code = request_json["response"]["status"]
 
