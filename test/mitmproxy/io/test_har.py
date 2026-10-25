@@ -1,11 +1,16 @@
+import io
 import json
 from pathlib import Path
 
 import pytest
 
 from mitmproxy import exceptions
+from mitmproxy import flowfilter
+from mitmproxy.addons.savehar import SaveHar
+from mitmproxy.io import FlowReader
 from mitmproxy.io.har import fix_headers
 from mitmproxy.io.har import request_to_flow
+from mitmproxy.test import tflow
 from mitmproxy.tools.web.app import flow_to_json
 
 data_dir = Path(__file__).parent.parent / "data"
@@ -52,6 +57,30 @@ def test_har_to_flow(har_file: Path):
         actual = json.loads(json.dumps(actual))
 
         assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "scheme, port",
+    [("http", 8080), ("https", 8443), ("http", 80), ("https", 443)],
+)
+@pytest.mark.parametrize("server_ip", ["192.0.2.1", "2001:db8::1", None])
+def test_server_address_port(scheme: str, port: int, server_ip: str | None):
+    flow = tflow.tflow(resp=True)
+    flow.request.scheme = scheme
+    flow.request.host = "example.com"
+    flow.request.port = port
+    flow.server_conn.peername = (server_ip, port) if server_ip else None
+    har = json.dumps(SaveHar().make_har([flow])).encode()
+
+    imported = next(FlowReader(io.BytesIO(har)).stream())
+
+    assert imported.request.port == port
+    assert imported.server_conn.address == ((server_ip, port) if server_ip else None)
+    if server_ip:
+        assert flowfilter.match(f"~dst :{port}$", imported)
+        if port not in (80, 443):
+            default_port = 80 if scheme == "http" else 443
+            assert not flowfilter.match(f"~dst :{default_port}$", imported)
 
 
 if __name__ == "__main__":
