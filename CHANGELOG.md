@@ -7,6 +7,8 @@
 
 ## Unreleased: mitmproxy next
 
+- Preserve non-default server ports when importing HAR files.
+
 
 ## 25 October 2026: mitmproxy 12.3.1
 
