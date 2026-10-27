@@ -72,15 +72,44 @@ class ResourceRecord(serializable.SerializableDataclass):
     data: bytes
 
     def __str__(self) -> str:
+        if self.type == types.TXT:
+            try:
+                return self.text
+            except ValueError:
+                pass
         return str(self._data_json())
 
     @property
     def text(self) -> str:
-        return self.data.decode("utf-8")
+        data = self.data
+        if self.type == types.TXT:
+            if not data:
+                raise ValueError("TXT data must contain at least one character-string")
+            chunks = []
+            offset = 0
+            while offset < len(data):
+                length = data[offset]
+                offset += 1
+                if offset + length > len(data):
+                    raise ValueError("Truncated TXT character-string")
+                chunks.append(data[offset : offset + length])
+                offset += length
+            data = b"".join(chunks)
+        return data.decode("utf-8")
 
     @text.setter
     def text(self, value: str) -> None:
-        self.data = value.encode("utf-8")
+        data = value.encode("utf-8")
+        if self.type == types.TXT:
+            # Character-strings contain at most 255 octets, not 255 code points.
+            data = (
+                b"".join(
+                    bytes([len(data[i : i + 255])]) + data[i : i + 255]
+                    for i in range(0, len(data), 255)
+                )
+                or b"\x00"
+            )
+        self.data = data
 
     @property
     def ipv4_address(self) -> IPv4Address:
@@ -160,7 +189,8 @@ class ResourceRecord(serializable.SerializableDataclass):
                 case types.NS | types.CNAME | types.PTR:
                     return self.domain_name
                 case types.TXT:
-                    return self.text
+                    # Preserve character-string boundaries in the editable JSON view.
+                    return self.data.decode("utf-8")
                 case types.HTTPS:
                     return https_records.unpack(self.data).to_json()
                 case _:
@@ -201,7 +231,9 @@ class ResourceRecord(serializable.SerializableDataclass):
                 case types.NS | types.CNAME | types.PTR:
                     inst.domain_name = d
                 case types.TXT:
-                    inst.text = d
+                    if d.startswith("0x") and d.endswith(" (invalid TXT data)"):
+                        raise ValueError
+                    inst.data = d.encode("utf-8")
                 case types.HTTPS:
                     record = HTTPSRecord.from_json(cast(HTTPSRecordJSON, d))
                     inst.data = https_records.pack(record)
@@ -239,7 +271,9 @@ class ResourceRecord(serializable.SerializableDataclass):
     @classmethod
     def TXT(cls, name: str, text: str, *, ttl: int = DEFAULT_TTL) -> ResourceRecord:
         """Create a textual resource record."""
-        return cls(name, types.TXT, classes.IN, ttl, text.encode("utf-8"))
+        record = cls(name, types.TXT, classes.IN, ttl, b"")
+        record.text = text
+        return record
 
     @classmethod
     def HTTPS(
