@@ -1423,3 +1423,90 @@ def test_forward_empty_data_frame(tctx):
         >> DataReceived(server, cff.build_data_frame(b"").serialize())
         << SendData(tctx.client, cff.build_data_frame(b"").serialize())
     )
+
+
+def test_request_trailers_dropped_for_http1_upstream(tctx: Context):
+    """HTTP/2 clients can send trailers, but HTTP/1.x upstreams cannot receive them (#8573)."""
+    playbook, cff = start_h2_client(tctx)
+    flow = Placeholder(HTTPFlow)
+    server = Placeholder(Server)
+    data = Placeholder(bytes)
+    assert (
+        playbook
+        >> DataReceived(
+            tctx.client,
+            cff.build_headers_frame(
+                [
+                    (b":method", b"POST"),
+                    (b":scheme", b"http"),
+                    (b":path", b"/"),
+                    (b":authority", b"example.com"),
+                    (b"content-length", b"5"),
+                ]
+            ).serialize(),
+        )
+        << http.HttpRequestHeadersHook(flow)
+        >> reply()
+        >> DataReceived(tctx.client, cff.build_data_frame(b"hello").serialize())
+        >> DataReceived(
+            tctx.client,
+            cff.build_headers_frame(
+                [(b"x-trailer", b"t")], flags=["END_STREAM"]
+            ).serialize(),
+        )
+        << http.HttpRequestHook(flow)
+        >> reply()
+        << OpenConnection(server)
+        >> reply(None)
+        << SendData(server, data)
+    )
+    # no AssertionError from the HTTP/1 send path, trailers are dropped:
+    assert (
+        data()
+        == b"POST / HTTP/1.1\r\nHost: example.com\r\ncontent-length: 5\r\n\r\nhello"
+    )
+    # ...but they are still visible to addons:
+    assert flow().request.trailers == Headers([(b"x-trailer", b"t")])
+
+
+def test_response_trailers_dropped_for_http1_client(tctx: Context):
+    """HTTP/2 upstreams can send trailers, but HTTP/1.x clients cannot receive them (#8573)."""
+    playbook = Playbook(http.HttpLayer(tctx, HTTPMode.regular))
+    flow = Placeholder(HTTPFlow)
+    server = Placeholder(Server)
+    upstream = Placeholder(bytes)
+    response = Placeholder(bytes)
+    sff = FrameFactory()
+    assert (
+        playbook
+        >> DataReceived(tctx.client, b"GET http://example.com/ HTTP/1.1\r\n\r\n")
+        << http.HttpRequestHeadersHook(flow)
+        >> reply()
+        << http.HttpRequestHook(flow)
+        >> reply()
+        << OpenConnection(server)
+        >> reply(None, side_effect=make_h2)
+        << RequestWakeup(58)
+        << SendData(server, upstream)
+        >> DataReceived(
+            server, sff.build_headers_frame(example_response_headers).serialize()
+        )
+        << http.HttpResponseHeadersHook(flow)
+        >> reply()
+        >> DataReceived(server, sff.build_data_frame(b"Hello, World!").serialize())
+        >> DataReceived(
+            server,
+            sff.build_headers_frame(
+                [(b"x-trailer", b"t")], flags=["END_STREAM"]
+            ).serialize(),
+        )
+        << http.HttpResponseHook(flow)
+        >> reply()
+        << SendData(tctx.client, response)
+        << CloseConnection(tctx.client)
+    )
+    # no AssertionError from the HTTP/1 send path, trailers are dropped:
+    assert b"x-trailer" not in response()
+    assert response().endswith(b"\r\n\r\nHello, World!")
+    # ...but they are still visible to addons:
+    assert flow().response.trailers == Headers([(b"x-trailer", b"t")])
