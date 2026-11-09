@@ -7,6 +7,10 @@
 
 ## Unreleased: mitmproxy next
 
+- Fix a crash (`AssertionError`) when an HTTP/2 or HTTP/3 peer sends trailers and the
+  other side of the flow speaks HTTP/1.x. Trailers are now dropped for HTTP/1.x peers,
+  which cannot represent them.
+  ([#8573](https://github.com/mitmproxy/mitmproxy/issues/8573), @hakarrr)
 - Expand `~` in the `hardump` option, like other file path options. Previously, the HAR file
   could not be written on exit and the collected flows were lost.
   ([#8541](https://github.com/mitmproxy/mitmproxy/pull/8541), @memx13)
