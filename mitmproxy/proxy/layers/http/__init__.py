@@ -98,6 +98,15 @@ def is_h3_alpn(alpn: bytes | None) -> bool:
     return alpn == b"h3" or (alpn is not None and alpn.startswith(b"h3-"))
 
 
+def can_receive_trailers(conn: Connection) -> bool:
+    """
+    HTTP/1.x peers cannot receive trailers: messages sent to them are framed by
+    content-length or connection close, neither of which can carry a trailer
+    section. HTTP/2 and HTTP/3 peers support trailers natively.
+    """
+    return conn.alpn == b"h2" or is_h3_alpn(conn.alpn)
+
+
 @dataclass
 class GetHttpConnection(HttpCommand):
     """
@@ -348,7 +357,7 @@ class HttpStream(layer.Layer):
             yield HttpRequestHook(self.flow)
             self.client_state = self.state_done
 
-            if self.flow.request.trailers:
+            if self.flow.request.trailers and can_receive_trailers(self.context.server):
                 # we've delayed sending trailers until after `request` has been triggered.
                 yield SendHttp(
                     RequestTrailers(self.stream_id, self.flow.request.trailers),
@@ -402,7 +411,9 @@ class HttpStream(layer.Layer):
                     yield SendHttp(
                         RequestData(self.stream_id, content), self.context.server
                     )
-                if self.flow.request.trailers:
+                if self.flow.request.trailers and can_receive_trailers(
+                    self.context.server
+                ):
                     yield SendHttp(
                         RequestTrailers(self.stream_id, self.flow.request.trailers),
                         self.context.server,
@@ -525,7 +536,7 @@ class HttpStream(layer.Layer):
                     ResponseData(self.stream_id, content), self.context.client
                 )
 
-        if self.flow.response.trailers:
+        if self.flow.response.trailers and can_receive_trailers(self.context.client):
             yield SendHttp(
                 ResponseTrailers(self.stream_id, self.flow.response.trailers),
                 self.context.client,
@@ -837,7 +848,7 @@ class HttpStream(layer.Layer):
         if content:
             yield SendHttp(ResponseData(self.stream_id, content), self.context.client)
 
-        if self.flow.response.trailers:
+        if self.flow.response.trailers and can_receive_trailers(self.context.client):
             yield SendHttp(
                 ResponseTrailers(self.stream_id, self.flow.response.trailers),
                 self.context.client,
