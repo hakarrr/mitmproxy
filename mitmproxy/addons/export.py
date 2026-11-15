@@ -188,42 +188,62 @@ class Export:
         return list(sorted(formats.keys()))
 
     @command.command("export.file")
-    def file(self, format: str, flow: flow.Flow, path: mitmproxy.types.Path) -> None:
+    def file(
+        self, format: str, flows: Sequence[flow.Flow], path: mitmproxy.types.Path
+    ) -> None:
         """
-        Export a flow to path.
+        Export flows to path.
         """
         if format not in formats:
-            raise exceptions.CommandError("No such export format: %s" % format)
-        v = formats[format](flow)
+            raise exceptions.CommandError(f"No such export format: {format}")
+        if isinstance(flows, flow.Flow):
+            flows = [flows]
+        if not flows:
+            raise exceptions.CommandError("No flows to export.")
+
+        formatter = formats[format]
+        parts = [formatter(f) for f in flows]
         try:
             with open(path, "wb") as fp:
-                if isinstance(v, bytes):
-                    fp.write(v)
+                if isinstance(parts[0], bytes):
+                    fp.write(b"\r\n\r\n".join(parts))  # type: ignore
                 else:
-                    fp.write(v.encode("utf-8", "surrogateescape"))
+                    fp.write(
+                        "\n\n".join(parts).encode("utf-8", "surrogateescape")  # type: ignore
+                    )
         except OSError as e:
             logging.error(str(e))
 
     @command.command("export.clip")
-    def clip(self, format: str, f: flow.Flow) -> None:
+    def clip(self, format: str, flows: Sequence[flow.Flow]) -> None:
         """
-        Export a flow to the system clipboard.
+        Export flows to the system clipboard.
         """
-        content = self.export_str(format, f)
+        content = self.export_str(format, flows)
         try:
             pyperclip.copy(content)
         except pyperclip.PyperclipException as e:
             logging.error(str(e))
 
     @command.command("export")
-    def export_str(self, format: str, f: flow.Flow) -> str:
+    def export_str(self, format: str, flows: Sequence[flow.Flow]) -> str:
         """
-        Export a flow and return the result.
+        Export flows and return the result.
         """
         if format not in formats:
-            raise exceptions.CommandError("No such export format: %s" % format)
+            raise exceptions.CommandError(f"No such export format: {format}")
+        if isinstance(flows, flow.Flow):
+            flows = [flows]
+        if not flows:
+            raise exceptions.CommandError("No flows to export.")
 
-        content = formats[format](f)
+        formatter = formats[format]
+        parts = [formatter(f) for f in flows]
+        if isinstance(parts[0], bytes):
+            content = b"\r\n\r\n".join(parts)  # type: ignore
+        else:
+            content = "\n\n".join(parts)  # type: ignore
+
         # The individual formatters may return surrogate-escaped UTF-8, but that may blow up in later steps.
         # For example, pyperclip on macOS does not like surrogates.
         # To fix this, We first surrogate-encode and then backslash-decode.

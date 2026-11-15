@@ -392,3 +392,50 @@ def test_clip(tmpdir, caplog):
             pc.side_effect = pyperclip.PyperclipException(log_message)
             e.clip("raw_request", tflow.tflow(resp=True))
             assert log_message in caplog.text
+
+
+def test_export_multiple_flows(tmpdir):
+    f1 = tflow.tflow(resp=True)
+    f2 = tflow.tflow(resp=True)
+    e = export.Export()
+    with taddons.context(e):
+        # Multiple curl commands separated by double newline
+        curl_result = e.export_str("curl", [f1, f2])
+        assert curl_result.count("curl ") == 2
+        assert "\n\n" in curl_result
+
+        # Single flow backward compatibility
+        assert e.export_str("curl", f1).count("curl ") == 1
+
+        # Multiple raw separated by CRLF * 2
+        raw_result = e.export_str("raw", [f1, f2])
+        assert raw_result.count("HTTP/1.1 200 OK") == 2
+
+        # Empty flows raises CommandError
+        with pytest.raises(exceptions.CommandError, match="No flows to export"):
+            e.export_str("curl", [])
+
+        # File export with multiple flows
+        p = str(tmpdir.join("multi.txt"))
+        e.file("curl", [f1, f2], p)
+        with open(p, "rb") as fp:
+            data = fp.read().decode("utf-8")
+        assert data.count("curl ") == 2
+        assert "\n\n" in data
+
+        # File export with multiple raw flows
+        p_raw = str(tmpdir.join("multi_raw.txt"))
+        e.file("raw", [f1, f2], p_raw)
+        with open(p_raw, "rb") as fp:
+            raw_data = fp.read()
+        assert b"\r\n\r\n" in raw_data
+
+        # Empty flows file export raises CommandError
+        with pytest.raises(exceptions.CommandError, match="No flows to export"):
+            e.file("curl", [], p)
+
+        # Clip export with multiple flows
+        with mock.patch("pyperclip.copy") as pc:
+            e.clip("curl", [f1, f2])
+            assert pc.called
+            assert "\n\n" in pc.call_args[0][0]
