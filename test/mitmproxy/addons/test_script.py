@@ -32,6 +32,32 @@ def test_load_script(tmp_path, tdata, caplog):
     assert "invalid syntax" in caplog.text
 
 
+@pytest.mark.parametrize(
+    "source, succeeds",
+    [
+        ("from _mitmproxy_syspath_helper import value\n", True),
+        ("raise RuntimeError('load failed')\n", False),
+        ("this is invalid syntax", False),
+    ],
+)
+def test_load_script_restores_sys_path(tmp_path, monkeypatch, source, succeeds):
+    original_path = sys.path.copy()
+    monkeypatch.setattr(sys, "path", original_path.copy())
+    (tmp_path / "_mitmproxy_syspath_helper.py").write_text("value = 42\n")
+    addon = tmp_path / "restore_path.py"
+    addon.write_text(source)
+
+    try:
+        for _ in range(3):
+            ns = script.load_script(str(addon))
+            assert (ns is not None) is succeeds
+            if succeeds:
+                assert ns.value == 42
+            assert sys.path == original_path
+    finally:
+        sys.modules.pop("_mitmproxy_syspath_helper", None)
+
+
 def test_load_fullname(tdata):
     """
     Test that loading two scripts at locations a/foo.py and b/foo.py works.
