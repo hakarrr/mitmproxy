@@ -7,6 +7,8 @@
 
 ## Unreleased: mitmproxy next
 
+- Restore Python's module search path after loading addon scripts.
+
 - Speed up addon event dispatch by skipping addons that don't implement the event.
   This saves work on every flow and makes plain HTTP proxying noticeably faster.
   ([#8577](https://github.com/mitmproxy/mitmproxy/pull/8577), @b84330808)
