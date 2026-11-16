@@ -27,7 +27,7 @@ def load_script(path: str) -> types.ModuleType | None:
     # the fullname is not unique among scripts, so if there already is an existing script with said
     # fullname, remove it.
     sys.modules.pop(fullname, None)
-    oldpath = sys.path
+    oldpath = sys.path.copy()
     sys.path.insert(0, os.path.dirname(path))
 
     try:
